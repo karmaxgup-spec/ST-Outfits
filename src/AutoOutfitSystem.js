@@ -22,6 +22,9 @@ export class AutoOutfitSystem {
 
         // Which API runs the outfit check: 'main' (SillyTavern's current API) or 'openai' (OpenAI-compatible endpoint)
         this.apiConfig = { mode: 'main', baseUrl: '', apiKey: '', model: '' };
+
+        // Show "Checking for outfit changes..." / "Outfit check completed." popups
+        this.showStatusPopups = true;
     }
 
     getDefaultPrompt() {
@@ -141,12 +144,12 @@ Important: Always use the exact slot names listed above. Never invent new slot n
     async processWithRetry() {
         while (this.currentRetryCount < this.maxRetries) {
             try {
-                this.showPopup(`Checking for outfit changes... (Attempt ${this.currentRetryCount + 1}/${this.maxRetries})`, 'info');
+                this.showStatusPopup(`Checking for outfit changes... (Attempt ${this.currentRetryCount + 1}/${this.maxRetries})`, 'info');
                 
                 await this.executeGenCommand();
                 
                 this.consecutiveFailures = 0;
-                this.showPopup('Outfit check completed.', 'success');
+                this.showStatusPopup('Outfit check completed.', 'success');
                 return; // Success!
                 
             } catch (error) {
@@ -482,6 +485,16 @@ Important: Always use the exact slot names listed above. Never invent new slot n
         }
     }
 
+    setStatusPopups(enabled) {
+        this.showStatusPopups = !!enabled;
+    }
+
+    // Progress/status messages. Controlled by the "Show status popups" setting.
+    showStatusPopup(message, type = 'info') {
+        if (!this.showStatusPopups) return;
+        this.showPopup(message, type);
+    }
+
     showPopup(message, type = 'info') {
         try {
             if (typeof toastr !== 'undefined') {
@@ -532,7 +545,7 @@ Important: Always use the exact slot names listed above. Never invent new slot n
         }
         
         try {
-            this.showPopup('Manual outfit check started...', 'info');
+            this.showStatusPopup('Manual outfit check started...', 'info');
             await this.processOutfitCommands();
         } catch (error) {
             this.showPopup(`Manual trigger failed: ${error.message}`, 'error');
@@ -548,4 +561,4 @@ Important: Always use the exact slot names listed above. Never invent new slot n
         this.systemPrompt = this.getDefaultPrompt();
         return '[Outfit System] Reset to default prompt.';
     }
-                                     }
+        }
