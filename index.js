@@ -167,6 +167,7 @@ async function initializeExtension() {
                 position: 'right',
                 enableSysMessages: true,
                 autoOutfitSystem: false,
+                autoOutfitApi: { mode: 'main', baseUrl: '', apiKey: '', model: '' },
                 autoOutfitPrompt: AutoOutfitSystem.name !== 'DummyAutoOutfitSystem' 
                     ? new AutoOutfitSystem(botManager).getDefaultPrompt() 
                     : '',
@@ -186,6 +187,12 @@ async function initializeExtension() {
                 extension_settings[MODULE_NAME].autoOutfitPrompt = autoOutfitSystem.systemPrompt;
             }
             
+            // Existing users won't have the API settings yet
+            if (!extension_settings[MODULE_NAME].autoOutfitApi) {
+                extension_settings[MODULE_NAME].autoOutfitApi = { mode: 'main', baseUrl: '', apiKey: '', model: '' };
+            }
+            autoOutfitSystem.setApiConfig(extension_settings[MODULE_NAME].autoOutfitApi);
+
             if (extension_settings[MODULE_NAME].autoOutfitSystem) {
                 autoOutfitSystem.enable();
             }
@@ -199,6 +206,31 @@ async function initializeExtension() {
                 <label for="outfit-auto-system">Enable auto outfit updates</label>
                 <input type="checkbox" id="outfit-auto-system"
                         ${extension_settings[MODULE_NAME].autoOutfitSystem ? 'checked' : ''}>
+            </div>
+            <div class="flex-container">
+                <label for="outfit-api-mode">Outfit check API:</label>
+                <select id="outfit-api-mode">
+                    <option value="main">Main API (current SillyTavern API)</option>
+                    <option value="openai">OpenAI-compatible endpoint</option>
+                </select>
+            </div>
+            <div id="outfit-openai-settings" style="display: none;">
+                <div class="flex-container">
+                    <label for="outfit-api-base">Base URL:</label>
+                    <input id="outfit-api-base" class="text_pole" type="text" placeholder="e.g. http://localhost:8080/v1">
+                </div>
+                <div class="flex-container">
+                    <label for="outfit-api-key">API key:</label>
+                    <input id="outfit-api-key" class="text_pole" type="password" placeholder="Leave empty if not needed">
+                </div>
+                <div class="flex-container">
+                    <button id="outfit-api-fetch-models" class="menu_button">Fetch models</button>
+                </div>
+                <div class="flex-container">
+                    <label for="outfit-api-model">Model:</label>
+                    <input id="outfit-api-model" class="text_pole" type="text" list="outfit-api-model-list" placeholder="Pick from list or type a model name">
+                    <datalist id="outfit-api-model-list"></datalist>
+                </div>
             </div>
             <div class="flex-container">
                 <label for="outfit-prompt-input">System Prompt:</label>
@@ -270,6 +302,61 @@ async function initializeExtension() {
                     autoOutfitSystem.disable();
                 }
                 saveSettingsDebounced();
+            });
+
+            // API settings for the outfit check
+            const apiSettings = extension_settings[MODULE_NAME].autoOutfitApi;
+            $("#outfit-api-mode").val(apiSettings.mode);
+            $("#outfit-api-base").val(apiSettings.baseUrl);
+            $("#outfit-api-key").val(apiSettings.apiKey);
+            $("#outfit-api-model").val(apiSettings.model);
+            $("#outfit-openai-settings").toggle(apiSettings.mode === 'openai');
+
+            const saveApiSettings = () => {
+                const api = extension_settings[MODULE_NAME].autoOutfitApi;
+                api.mode = $("#outfit-api-mode").val();
+                api.baseUrl = ($("#outfit-api-base").val() || '').trim();
+                api.apiKey = ($("#outfit-api-key").val() || '').trim();
+                api.model = ($("#outfit-api-model").val() || '').trim();
+                autoOutfitSystem.setApiConfig(api);
+                saveSettingsDebounced();
+            };
+
+            $("#outfit-api-mode").on("change", function() {
+                $("#outfit-openai-settings").toggle($(this).val() === 'openai');
+                saveApiSettings();
+            });
+
+            $("#outfit-api-base, #outfit-api-key, #outfit-api-model").on("change", saveApiSettings);
+
+            $("#outfit-api-fetch-models").on("click", async function() {
+                const baseUrl = ($("#outfit-api-base").val() || '').trim().replace(/\/+$/, '');
+                if (!baseUrl) {
+                    toastr.warning('Enter a base URL first.', 'Outfit System');
+                    return;
+                }
+
+                const headers = {};
+                const key = ($("#outfit-api-key").val() || '').trim();
+                if (key) {
+                    headers['Authorization'] = `Bearer ${key}`;
+                }
+
+                try {
+                    const response = await fetch(`${baseUrl}/models`, { headers });
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}`);
+                    }
+                    const data = await response.json();
+                    const ids = (data.data || []).map(model => model.id).filter(Boolean);
+
+                    const list = $("#outfit-api-model-list").empty();
+                    ids.forEach(id => list.append($('<option>').val(id)));
+
+                    toastr.success(`Found ${ids.length} model(s). You can also type a model name.`, 'Outfit System');
+                } catch (error) {
+                    toastr.error(`Could not fetch models: ${error.message}`, 'Outfit System');
+                }
             });
 
             $("#outfit-prompt-input").on("change", function() {
