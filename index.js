@@ -168,6 +168,7 @@ async function initializeExtension() {
                 enableSysMessages: true,
                 autoOutfitSystem: false,
                 autoOutfitApi: { mode: 'main', baseUrl: '', apiKey: '', model: '' },
+                showStatusPopups: true,
                 autoOutfitPrompt: AutoOutfitSystem.name !== 'DummyAutoOutfitSystem' 
                     ? new AutoOutfitSystem(botManager).getDefaultPrompt() 
                     : '',
@@ -193,6 +194,12 @@ async function initializeExtension() {
             }
             autoOutfitSystem.setApiConfig(extension_settings[MODULE_NAME].autoOutfitApi);
 
+            // Existing users won't have this setting yet
+            if (extension_settings[MODULE_NAME].showStatusPopups === undefined) {
+                extension_settings[MODULE_NAME].showStatusPopups = true;
+            }
+            autoOutfitSystem.setStatusPopups(extension_settings[MODULE_NAME].showStatusPopups);
+
             if (extension_settings[MODULE_NAME].autoOutfitSystem) {
                 autoOutfitSystem.enable();
             }
@@ -206,6 +213,11 @@ async function initializeExtension() {
                 <label for="outfit-auto-system">Enable auto outfit updates</label>
                 <input type="checkbox" id="outfit-auto-system"
                         ${extension_settings[MODULE_NAME].autoOutfitSystem ? 'checked' : ''}>
+            </div>
+            <div class="flex-container">
+                <label for="outfit-status-popups">Show status popups (checking / completed)</label>
+                <input type="checkbox" id="outfit-status-popups"
+                        ${extension_settings[MODULE_NAME].showStatusPopups ? 'checked' : ''}>
             </div>
             <div class="flex-container">
                 <label for="outfit-api-mode">Outfit check API:</label>
@@ -301,6 +313,13 @@ async function initializeExtension() {
                 } else {
                     autoOutfitSystem.disable();
                 }
+                saveSettingsDebounced();
+            });
+
+            $("#outfit-status-popups").on("input", function() {
+                const enabled = $(this).prop('checked');
+                extension_settings[MODULE_NAME].showStatusPopups = enabled;
+                autoOutfitSystem.setStatusPopups(enabled);
                 saveSettingsDebounced();
             });
 
