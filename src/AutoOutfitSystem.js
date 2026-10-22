@@ -19,6 +19,9 @@ export class AutoOutfitSystem {
         
         // Track initialization state
         this.appInitialized = false;
+
+        // Which API runs the outfit check: 'main' (SillyTavern's current API) or 'openai' (OpenAI-compatible endpoint)
+        this.apiConfig = { mode: 'main', baseUrl: '', apiKey: '', model: '' };
     }
 
     getDefaultPrompt() {
@@ -194,7 +197,6 @@ Important: Always use the exact slot names listed above. Never invent new slot n
             throw new Error('No valid messages to process');
         }
 
-        const { generateRaw } = getContext();
         
         // Generate the current outfit block dynamically
         const currentOutfitBlock = this.getOutfitStateString();
@@ -204,10 +206,7 @@ Important: Always use the exact slot names listed above. Never invent new slot n
         console.log('[AutoOutfitSystem] Generating outfit commands with generateRaw...');
         
         try {
-            const result = await generateRaw({
-                prompt: promptText,
-                systemPrompt: "You are an outfit change detection system. Analyze the conversation and output outfit commands when clothing changes occur."
-            });
+            const result = await this.requestOutfitOutput(promptText);
 
             if (!result) {
                 throw new Error('No output generated from generation');
@@ -226,6 +225,11 @@ Important: Always use the exact slot names listed above. Never invent new slot n
             
         } catch (error) {
             console.error('[AutoOutfitSystem] Generation failed:', error);
+            // With a custom OpenAI-compatible endpoint, don't silently fall back to the main API.
+            // Throw so the normal retry logic handles it.
+            if (this.apiConfig?.mode === 'openai') {
+                throw error;
+            }
             await this.tryFallbackGeneration(promptText);
         }
     }
@@ -258,6 +262,63 @@ Important: Always use the exact slot names listed above. Never invent new slot n
             console.error('[AutoOutfitSystem] Fallback generation also failed:', fallbackError);
             throw new Error(`Both generation methods failed: ${fallbackError.message}`);
         }
+    }
+
+    setApiConfig(config) {
+        this.apiConfig = {
+            mode: 'main',
+            baseUrl: '',
+            apiKey: '',
+            model: '',
+            ...(config || {})
+        };
+    }
+
+    async requestOutfitOutput(promptText) {
+        const systemMessage = "You are an outfit change detection system. Analyze the conversation and output outfit commands when clothing changes occur.";
+
+        if (this.apiConfig?.mode === 'openai') {
+            return await this.callOpenAICompatible(systemMessage, promptText, this.apiConfig);
+        }
+
+        const { generateRaw } = getContext();
+        return await generateRaw({
+            prompt: promptText,
+            systemPrompt: systemMessage
+        });
+    }
+
+    async callOpenAICompatible(systemMessage, promptText, cfg) {
+        if (!cfg.baseUrl || !cfg.model) {
+            throw new Error('OpenAI-compatible API needs a base URL and a model name.');
+        }
+
+        const url = cfg.baseUrl.replace(/\/+$/, '') + '/chat/completions';
+        const headers = { 'Content-Type': 'application/json' };
+        if (cfg.apiKey) {
+            headers['Authorization'] = `Bearer ${cfg.apiKey}`;
+        }
+
+        const response = await fetch(url, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+                model: cfg.model,
+                messages: [
+                    { role: 'system', content: systemMessage },
+                    { role: 'user', content: promptText }
+                ],
+                temperature: 0.2
+            })
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text().catch(() => '');
+            throw new Error(`OpenAI-compatible request failed: ${response.status} ${errorText.slice(0, 200)}`);
+        }
+
+        const data = await response.json();
+        return data?.choices?.[0]?.message?.content || '';
     }
 
     parseGeneratedText(text) {
@@ -487,4 +548,4 @@ Important: Always use the exact slot names listed above. Never invent new slot n
         this.systemPrompt = this.getDefaultPrompt();
         return '[Outfit System] Reset to default prompt.';
     }
-}
+                                     }
