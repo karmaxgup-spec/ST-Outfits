@@ -169,6 +169,8 @@ async function initializeExtension() {
                 autoOutfitSystem: false,
                 autoOutfitApi: { mode: 'main', baseUrl: '', apiKey: '', model: '' },
                 showStatusPopups: true,
+                checkInterval: 3,
+                triggerWords: AutoOutfitSystem.getDefaultTriggerWords?.() ?? [],
                 autoOutfitPrompt: AutoOutfitSystem.name !== 'DummyAutoOutfitSystem' 
                     ? new AutoOutfitSystem(botManager).getDefaultPrompt() 
                     : '',
@@ -200,6 +202,16 @@ async function initializeExtension() {
             }
             autoOutfitSystem.setStatusPopups(extension_settings[MODULE_NAME].showStatusPopups);
 
+            // Existing users won't have the check interval or trigger words yet
+            if (extension_settings[MODULE_NAME].checkInterval === undefined) {
+                extension_settings[MODULE_NAME].checkInterval = 3;
+            }
+            if (!Array.isArray(extension_settings[MODULE_NAME].triggerWords)) {
+                extension_settings[MODULE_NAME].triggerWords = AutoOutfitSystem.getDefaultTriggerWords();
+            }
+            autoOutfitSystem.setCheckInterval(extension_settings[MODULE_NAME].checkInterval);
+            autoOutfitSystem.setTriggerWords(extension_settings[MODULE_NAME].triggerWords);
+
             if (extension_settings[MODULE_NAME].autoOutfitSystem) {
                 autoOutfitSystem.enable();
             }
@@ -219,6 +231,19 @@ async function initializeExtension() {
                 <input type="checkbox" id="outfit-status-popups"
                         ${extension_settings[MODULE_NAME].showStatusPopups ? 'checked' : ''}>
             </div>
+            <div class="flex-container">
+                <label for="outfit-check-interval">Run check every N AI messages:</label>
+                <input id="outfit-check-interval" class="text_pole" type="number" min="1" step="1" style="width: 70px;">
+            </div>
+            <div class="flex-container">
+                <label>Trigger words (a check runs when your message contains one; click a word to remove it):</label>
+            </div>
+            <div class="flex-container">
+                <input id="outfit-trigger-input" class="text_pole" type="text" placeholder="Add a trigger word">
+                <button id="outfit-trigger-add" class="menu_button">Add</button>
+                <button id="outfit-trigger-reset" class="menu_button">Reset to defaults</button>
+            </div>
+            <div id="outfit-trigger-list" class="flex-container" style="flex-wrap: wrap;"></div>
             <div class="flex-container">
                 <label for="outfit-api-mode">Outfit check API:</label>
                 <select id="outfit-api-mode">
@@ -322,6 +347,57 @@ async function initializeExtension() {
                 autoOutfitSystem.setStatusPopups(enabled);
                 saveSettingsDebounced();
             });
+
+            // Check interval
+            $("#outfit-check-interval").val(extension_settings[MODULE_NAME].checkInterval).on("change", function() {
+                const value = Math.max(1, parseInt($(this).val(), 10) || 3);
+                $(this).val(value);
+                extension_settings[MODULE_NAME].checkInterval = value;
+                autoOutfitSystem.setCheckInterval(value);
+                saveSettingsDebounced();
+            });
+
+            // Trigger words
+            const renderTriggerWords = () => {
+                const words = extension_settings[MODULE_NAME].triggerWords;
+                const list = $("#outfit-trigger-list").empty();
+                words.forEach((word, index) => {
+                    const chip = $('<span class="menu_button" style="cursor: pointer;"></span>').text(`${word} ×`);
+                    chip.on("click", () => {
+                        extension_settings[MODULE_NAME].triggerWords.splice(index, 1);
+                        saveTriggerWords();
+                    });
+                    list.append(chip);
+                });
+            };
+
+            const saveTriggerWords = () => {
+                autoOutfitSystem.setTriggerWords(extension_settings[MODULE_NAME].triggerWords);
+                saveSettingsDebounced();
+                renderTriggerWords();
+            };
+
+            const addTriggerWord = () => {
+                const input = $("#outfit-trigger-input");
+                const word = (input.val() || '').trim();
+                if (!word) return;
+                const words = extension_settings[MODULE_NAME].triggerWords;
+                if (!words.some(w => w.toLowerCase() === word.toLowerCase())) {
+                    words.push(word);
+                    saveTriggerWords();
+                }
+                input.val('');
+            };
+
+            $("#outfit-trigger-add").on("click", addTriggerWord);
+            $("#outfit-trigger-input").on("keydown", function(e) {
+                if (e.key === 'Enter') addTriggerWord();
+            });
+            $("#outfit-trigger-reset").on("click", function() {
+                extension_settings[MODULE_NAME].triggerWords = AutoOutfitSystem.getDefaultTriggerWords();
+                saveTriggerWords();
+            });
+            renderTriggerWords();
 
             // API settings for the outfit check
             const apiSettings = extension_settings[MODULE_NAME].autoOutfitApi;
