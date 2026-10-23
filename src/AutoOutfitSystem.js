@@ -1,6 +1,20 @@
 import { getContext } from "../../../../extensions.js";
 import { extension_settings } from "../../../../extensions.js";
 
+// Default trigger words: if a user message contains one of these, an outfit check runs right away
+export const DEFAULT_TRIGGER_WORDS = [
+    'shirt', 't-shirt', 'blouse', 'dress', 'skirt', 'pants', 'jeans', 'shorts', 'underwear',
+    'bra', 'panties', 'lingerie', 'socks', 'stockings', 'shoes', 'boots', 'sneakers', 'heels',
+    'jacket', 'coat', 'hoodie', 'sweater', 'hat', 'cap', 'scarf', 'gloves', 'glasses', 'belt',
+    'necklace', 'earrings', 'bracelet', 'ring', 'uniform', 'armor', 'robe', 'cloak', 'suit',
+    'swimsuit', 'bikini', 'towel', 'naked', 'undress', 'take off', 'takes off', 'put on', 'puts on',
+    'change into', 'changes into'
+];
+
+function escapeRegex(text) {
+    return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 export class AutoOutfitSystem {
     constructor(outfitManager) {
         this.outfitManager = outfitManager;
@@ -25,6 +39,13 @@ export class AutoOutfitSystem {
 
         // Show "Checking for outfit changes..." / "Outfit check completed." popups
         this.showStatusPopups = true;
+
+        // Run the check every N AI messages, or sooner if a user message contains a trigger word
+        this.checkInterval = 3;
+        this.messagesSinceCheck = 0;
+        this.forceCheckPending = false;
+        this.triggerWords = [...DEFAULT_TRIGGER_WORDS];
+        this.userSentHandler = null;
     }
 
     getDefaultPrompt() {
@@ -60,6 +81,8 @@ Important: Always use the exact slot names listed above. Never invent new slot n
         this.isEnabled = true;
         this.consecutiveFailures = 0;
         this.currentRetryCount = 0;
+        this.messagesSinceCheck = 0;
+        this.forceCheckPending = false;
         this.setupEventListeners();
         return '[Outfit System] Auto outfit updates enabled.';
     }
@@ -84,6 +107,7 @@ Important: Always use the exact slot names listed above. Never invent new slot n
             // Only process AI messages (not user messages) and only after app is initialized
             if (this.isEnabled && !this.isProcessing && this.appInitialized && 
                 data && !data.is_user) {
+                if (!this.consumeCheckDue()) return;
                 console.log('[AutoOutfitSystem] New AI message received, processing...');
                 setTimeout(() => {
                     this.processOutfitCommands().catch(error => {
@@ -95,6 +119,16 @@ Important: Always use the exact slot names listed above. Never invent new slot n
         };
         
         eventSource.on(event_types.MESSAGE_RECEIVED, this.eventHandler);
+
+        // Scan the user's own messages for trigger words
+        this.userSentHandler = () => {
+            if (this.isEnabled && this.appInitialized) {
+                this.checkForTriggerWord();
+            }
+        };
+        if (event_types.MESSAGE_SENT) {
+            eventSource.on(event_types.MESSAGE_SENT, this.userSentHandler);
+        }
         console.log('[AutoOutfitSystem] Event listener registered for MESSAGE_RECEIVED');
     }
 
@@ -103,6 +137,10 @@ Important: Always use the exact slot names listed above. Never invent new slot n
             const { eventSource, event_types } = getContext();
             eventSource.off(event_types.MESSAGE_RECEIVED, this.eventHandler);
             this.eventHandler = null;
+            if (this.userSentHandler && event_types.MESSAGE_SENT) {
+                eventSource.off(event_types.MESSAGE_SENT, this.userSentHandler);
+            }
+            this.userSentHandler = null;
             console.log('[AutoOutfitSystem] Event listener removed');
         }
     }
@@ -485,6 +523,59 @@ Important: Always use the exact slot names listed above. Never invent new slot n
         }
     }
 
+    static getDefaultTriggerWords() {
+        return [...DEFAULT_TRIGGER_WORDS];
+    }
+
+    setCheckInterval(value) {
+        const n = parseInt(value, 10);
+        this.checkInterval = Number.isFinite(n) && n >= 1 ? n : 3;
+    }
+
+    setTriggerWords(words) {
+        const list = Array.isArray(words) ? words : [];
+        const seen = new Set();
+        this.triggerWords = list
+            .map(w => String(w).trim())
+            .filter(w => {
+                const key = w.toLowerCase();
+                if (!w || seen.has(key)) return false;
+                seen.add(key);
+                return true;
+            });
+    }
+
+    // Counts one AI message. Returns true when the check should run now.
+    consumeCheckDue() {
+        this.messagesSinceCheck++;
+        const due = this.forceCheckPending || this.messagesSinceCheck >= this.checkInterval;
+        if (!due) {
+            console.log(`[AutoOutfitSystem] Skipping check (${this.messagesSinceCheck}/${this.checkInterval})`);
+            return false;
+        }
+        this.messagesSinceCheck = 0;
+        this.forceCheckPending = false;
+        return true;
+    }
+
+    // Called when the user sends a message: queue a check if it contains a trigger word
+    checkForTriggerWord() {
+        const { chat } = getContext();
+        const last = Array.isArray(chat) ? chat[chat.length - 1] : null;
+        if (!last || !last.is_user || typeof last.mes !== 'string') return;
+
+        if (this.containsTriggerWord(last.mes)) {
+            console.log('[AutoOutfitSystem] Trigger word found in user message, check queued for next AI reply');
+            this.forceCheckPending = true;
+        }
+    }
+
+    containsTriggerWord(text) {
+        return this.triggerWords.some(word =>
+            new RegExp(`\\b${escapeRegex(word)}\\b`, 'i').test(text)
+        );
+    }
+
     setStatusPopups(enabled) {
         this.showStatusPopups = !!enabled;
     }
@@ -545,6 +636,8 @@ Important: Always use the exact slot names listed above. Never invent new slot n
         }
         
         try {
+            this.messagesSinceCheck = 0;
+            this.forceCheckPending = false;
             this.showStatusPopup('Manual outfit check started...', 'info');
             await this.processOutfitCommands();
         } catch (error) {
@@ -561,4 +654,4 @@ Important: Always use the exact slot names listed above. Never invent new slot n
         this.systemPrompt = this.getDefaultPrompt();
         return '[Outfit System] Reset to default prompt.';
     }
-        }
+            }
